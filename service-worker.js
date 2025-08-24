@@ -1,4 +1,4 @@
-const CACHE = 'my-pwa-v3';
+const CACHE = 'my-pwa-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -38,5 +38,6 @@ self.addEventListener('fetch', (event) => {
     caches.match(req).then(hit => hit || fetch(req))
   );
 });
+
 
 
