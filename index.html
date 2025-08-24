@@ -5,118 +5,66 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="manifest.json" />
-  <title>Macro App (demo)</title>
+  <title>Macro App (meals demo)</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 560px; }
-    h1 { margin-bottom: .5rem; }
-    .card { padding: 1rem; border: 1px solid #ddd; border-radius: .75rem; }
-    label { display: block; margin: .5rem 0 .25rem; }
-    input { width: 100%; padding: .5rem; border:1px solid #ccc; border-radius:.5rem; }
-    .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .5rem; }
-    button { margin-top: .75rem; padding:.6rem 1rem; border:1px solid #ddd; border-radius:.75rem; cursor:pointer; }
-    .muted { color: #555; font-size: .9rem; }
-    .totals { margin-top: 1rem; padding: .75rem; background: #f7f7f7; border-radius: .5rem; }
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 720px; }
+    h1 { margin-bottom: .25rem; }
+    .muted { color:#555; font-size:.9rem; margin-bottom:1rem; }
+    .row { display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap:.5rem; align-items:end; }
+    label { font-size:.9rem; }
+    input, select { width:100%; padding:.55rem; border:1px solid #ccc; border-radius:.5rem; }
+    button { padding:.6rem 1rem; border:1px solid #ddd; border-radius:.7rem; cursor:pointer; background:#fff; }
+    .card { padding:1rem; border:1px solid #ddd; border-radius:.75rem; margin-bottom:1rem; }
+    table { width:100%; border-collapse: collapse; margin-top:.5rem; }
+    th, td { padding:.5rem; border-bottom:1px solid #eee; text-align:left; }
+    .totals { background:#f7f7f7; border-radius:.5rem; padding:.6rem .8rem; margin-top:.5rem; }
+    .meal-title { display:flex; justify-content:space-between; align-items:center; }
+    .pill { font-size:.8rem; padding:.2rem .5rem; border:1px solid #ddd; border-radius:999px; background:#fff; }
+    .right { text-align:right; }
   </style>
 </head>
 <body>
-  <h1>🍽️ Macro Counter (demo)</h1>
-  <p class="muted">Enter grams for one item, calculate, then “Add to today”. It works offline and remembers today’s totals.</p>
+  <h1>🍽️ Macro Counter — Meals</h1>
+  <p class="muted">Pick a meal (1–6), choose a food and portion, then <strong>Add</strong>. Values are estimates per 100g and stored offline. You can go offline and it still works.</p>
 
   <div class="card">
     <div class="row">
       <div>
-        <label>Protein (g)</label>
-        <input id="p" type="number" min="0" step="1" value="0">
+        <label>Meal</label>
+        <select id="meal">
+          <option value="0">Meal 1</option>
+          <option value="1">Meal 2</option>
+          <option value="2">Meal 3</option>
+          <option value="3">Meal 4</option>
+          <option value="4">Meal 5</option>
+          <option value="5">Meal 6</option>
+        </select>
       </div>
       <div>
-        <label>Carbs (g)</label>
-        <input id="c" type="number" min="0" step="1" value="0">
+        <label>Food</label>
+        <input id="foodInput" list="foodlist" placeholder="e.g., banana, oats, pasta (cooked)">
+        <datalist id="foodlist"></datalist>
       </div>
       <div>
-        <label>Fat (g)</label>
-        <input id="f" type="number" min="0" step="1" value="0">
+        <label>Portion</label>
+        <select id="portion"></select>
+      </div>
+      <div>
+        <label>Grams</label>
+        <input id="grams" type="number" min="1" step="1" value="100">
+      </div>
+      <div>
+        <button id="addBtn">Add</button>
       </div>
     </div>
-
-    <button id="calc">Calculate kcal</button>
-    <div id="result" class="totals" style="display:none;"></div>
-
-    <button id="add" style="display:none;">Add to today</button>
-    <button id="resetDay" style="display:none; margin-left:.5rem;">Reset today</button>
-
-    <div id="today" class="totals" style="display:none;"></div>
+    <div id="preview" class="totals" style="display:none;"></div>
   </div>
 
-  <script>
-    // --- tiny macro app ---
-    const $ = (id) => document.getElementById(id);
-    const keyForToday = () => 'totals-' + new Date().toISOString().slice(0,10); // e.g., totals-2025-08-23
+  <div id="meals"></div>
 
-    function readToday() {
-      try { return JSON.parse(localStorage.getItem(keyForToday())) || { p:0, c:0, f:0, kcal:0 }; }
-      catch { return { p:0, c:0, f:0, kcal:0 }; }
-    }
-    function writeToday(t) { localStorage.setItem(keyForToday(), JSON.stringify(t)); }
-
-    function kcalOf(p,c,f){ return p*4 + c*4 + f*9; }
-
-    function showToday() {
-      const t = readToday();
-      const box = $('today');
-      box.style.display = 'block';
-      box.innerHTML = `
-        <strong>Today’s totals</strong><br>
-        Protein: ${t.p} g · Carbs: ${t.c} g · Fat: ${t.f} g<br>
-        Calories: ${t.kcal} kcal
-      `;
-      $('resetDay').style.display = (t.p||t.c||t.f) ? 'inline-block' : 'none';
-    }
-
-    $('calc').addEventListener('click', () => {
-      const p = Math.max(0, Number($('p').value) || 0);
-      const c = Math.max(0, Number($('c').value) || 0);
-      const f = Math.max(0, Number($('f').value) || 0);
-      const kcal = kcalOf(p,c,f);
-
-      const r = $('result');
-      r.style.display = 'block';
-      r.innerHTML = `<strong>This item</strong><br>
-        Protein: ${p} g · Carbs: ${c} g · Fat: ${f} g<br>
-        Calories: ${kcal} kcal`;
-
-      // stash current calc on the button for the add step
-      $('add').dataset.p = p; $('add').dataset.c = c; $('add').dataset.f = f; $('add').dataset.kcal = kcal;
-      $('add').style.display = 'inline-block';
-    });
-
-    $('add').addEventListener('click', () => {
-      const t = readToday();
-      t.p += Number($('add').dataset.p || 0);
-      t.c += Number($('add').dataset.c || 0);
-      t.f += Number($('add').dataset.f || 0);
-      t.kcal += Number($('add').dataset.kcal || 0);
-      writeToday(t);
-      showToday();
-    });
-
-    $('resetDay').addEventListener('click', () => {
-      localStorage.removeItem(keyForToday());
-      showToday();
-    });
-
-    // on load, show any saved totals
-    showToday();
-  </script>
-
-  <!-- keep your service worker registration here -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js', { scope: './' })
-          .catch(err => console.error('SW registration failed:', err));
-      });
-    }
-  </script>
-</body>
-</html>
-
+  <div class="card">
+    <div class="meal-title">
+      <strong>Day total</strong>
+      <button id="resetDay" class="pill">Reset today</button>
+    </div>
+    <div id="day
