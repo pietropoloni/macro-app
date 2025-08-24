@@ -67,4 +67,202 @@
       <strong>Day total</strong>
       <button id="resetDay" class="pill">Reset today</button>
     </div>
-    <div id="day
+    <div id="dayTotal" class="totals"></div>
+  </div>
+
+  <script>
+    // ---- Mini food database (per 100g) ----
+    // Simple, offline, approximate values. You can add/edit later.
+    const FOODS = [
+      {name:'Banana', p:1.1, c:23.0, f:0.3, portions:[{label:'100 g',g:100},{label:'1 medium (118 g)',g:118}]},
+      {name:'Oats (dry)', p:13.2, c:67.7, f:6.5, portions:[{label:'100 g',g:100},{label:'½ cup dry (40 g)',g:40},{label:'Bowl (60 g)',g:60}]},
+      {name:'Pasta (cooked)', p:5.8, c:30.0, f:1.1, portions:[{label:'100 g',g:100},{label:'1 cup cooked (140 g)',g:140},{label:'Plate (250 g)',g:250}]},
+      {name:'Rice (cooked, white)', p:2.4, c:28.0, f:0.3, portions:[{label:'100 g',g:100},{label:'1 cup (158 g)',g:158},{label:'Bowl (150 g)',g:150}]},
+      {name:'Chicken breast (cooked)', p:31.0, c:0.0, f:3.6, portions:[{label:'100 g',g:100},{label:'1 breast (120 g)',g:120}]},
+      {name:'Olive oil', p:0.0, c:0.0, f:100.0, portions:[{label:'1 tsp (4.5 g)',g:4.5},{label:'1 tbsp (14 g)',g:14},{label:'100 g',g:100}]},
+      {name:'Egg (whole)', p:12.6, c:1.1, f:10.6, portions:[{label:'1 large (50 g)',g:50},{label:'100 g',g:100}]},
+      {name:'Milk (2%)', p:3.4, c:5.0, f:1.5, portions:[{label:'1 cup (244 g)',g:244},{label:'100 g',g:100}]},
+      {name:'Greek yogurt (0%)', p:10.0, c:3.6, f:0.4, portions:[{label:'1 container (170 g)',g:170},{label:'100 g',g:100}]},
+      {name:'Peanut butter', p:25.0, c:20.0, f:50.0, portions:[{label:'1 tbsp (16 g)',g:16},{label:'2 tbsp (32 g)',g:32},{label:'100 g',g:100}]},
+      {name:'Apple', p:0.3, c:14.0, f:0.2, portions:[{label:'1 medium (182 g)',g:182},{label:'100 g',g:100}]},
+      {name:'Bread (white)', p:8.7, c:49.0, f:3.3, portions:[{label:'1 slice (38 g)',g:38},{label:'100 g',g:100}]}
+    ];
+
+    // ---- Helpers ----
+    const $ = id => document.getElementById(id);
+    const todayKey = () => 'meals-' + new Date().toISOString().slice(0,10); // e.g. meals-2025-08-24
+    const kcal = (p,c,f) => Math.round((p*4 + c*4 + f*9));
+
+    function round1(x){ return Math.round(x*10)/10; }
+
+    function defaultDay(){
+      return { meals:[[],[],[],[],[],[]] }; // 6 meals, each an array of items
+    }
+
+    function loadDay(){
+      try { return JSON.parse(localStorage.getItem(todayKey())) || defaultDay(); }
+      catch { return defaultDay(); }
+    }
+
+    function saveDay(data){
+      localStorage.setItem(todayKey(), JSON.stringify(data));
+    }
+
+    // ---- UI setup ----
+    // Fill datalist with foods
+    const foodlist = $('foodlist');
+    FOODS.forEach(f => {
+      const o = document.createElement('option');
+      o.value = f.name;
+      foodlist.appendChild(o);
+    });
+
+    function findFoodByName(name){
+      return FOODS.find(f => f.name.toLowerCase() === String(name||'').toLowerCase());
+    }
+
+    function fillPortions(food){
+      const sel = $('portion');
+      sel.innerHTML = '';
+      (food?.portions || [{label:'100 g', g:100}]).forEach(p =>
+        sel.insertAdjacentHTML('beforeend', `<option value="${p.g}">${p.label}</option>`)
+      );
+      // set grams box from first portion
+      if (sel.options.length) $('grams').value = sel.options[0].value;
+    }
+
+    // When food changes, update portions and preview
+    $('foodInput').addEventListener('input', () => {
+      const food = findFoodByName($('foodInput').value);
+      fillPortions(food);
+      updatePreview();
+    });
+
+    $('portion').addEventListener('change', () => {
+      $('grams').value = $('portion').value;
+      updatePreview();
+    });
+    $('grams').addEventListener('input', updatePreview);
+    $('meal').addEventListener('change', updatePreview);
+
+    function updatePreview(){
+      const food = findFoodByName($('foodInput').value);
+      const g = Math.max(1, Number($('grams').value)||0);
+      const box = $('preview');
+      if (!food) { box.style.display='none'; return; }
+      const p = (food.p*g/100), c = (food.c*g/100), f = (food.f*g/100);
+      box.style.display='block';
+      box.innerHTML = `<strong>Item preview</strong> — ${food.name}, ${g} g<br>
+        Protein: ${round1(p)} g · Carbs: ${round1(c)} g · Fat: ${round1(f)} g<br>
+        Calories: ${kcal(p,c,f)} kcal`;
+    }
+
+    // ---- Add item ----
+    $('addBtn').addEventListener('click', () => {
+      const mealIdx = Number($('meal').value);
+      const name = $('foodInput').value.trim();
+      const food = findFoodByName(name);
+      const g = Math.max(1, Number($('grams').value)||0);
+
+      if (!food) { alert('Pick a food from the list.'); return; }
+
+      const p = round1(food.p*g/100), c = round1(food.c*g/100), f = round1(food.f*g/100);
+      const item = { name: food.name, grams: g, p, c, f, kcal: kcal(p,c,f) };
+
+      const data = loadDay();
+      data.meals[mealIdx].push(item);
+      saveDay(data);
+      render();
+      // keep preview visible for next add
+    });
+
+    // ---- Render meals and totals ----
+    function mealTotals(items){
+      return items.reduce((t,x)=>({p:t.p+x.p, c:t.c+x.c, f:t.f+x.f, kcal:t.kcal+x.kcal}), {p:0,c:0,f:0,kcal:0});
+    }
+
+    function render(){
+      const data = loadDay();
+      const wrap = $('meals');
+      wrap.innerHTML = '';
+
+      let day = {p:0,c:0,f:0,kcal:0};
+
+      data.meals.forEach((items, idx) => {
+        const t = mealTotals(items);
+        day.p += t.p; day.c += t.c; day.f += t.f; day.kcal += t.kcal;
+
+        const rows = items.map((x,i)=>`
+          <tr>
+            <td>${x.name}</td>
+            <td class="right">${x.grams} g</td>
+            <td class="right">${x.p}</td>
+            <td class="right">${x.c}</td>
+            <td class="right">${x.f}</td>
+            <td class="right">${x.kcal}</td>
+            <td class="right"><button class="pill" data-del="${idx}:${i}">✕</button></td>
+          </tr>
+        `).join('');
+
+        wrap.insertAdjacentHTML('beforeend', `
+          <div class="card">
+            <div class="meal-title">
+              <strong>Meal ${idx+1}</strong>
+              <span class="pill">Items: ${items.length}</span>
+            </div>
+            <table>
+              <thead><tr>
+                <th>Food</th><th class="right">Grams</th>
+                <th class="right">P (g)</th><th class="right">C (g)</th><th class="right">F (g)</th>
+                <th class="right">kcal</th><th></th>
+              </tr></thead>
+              <tbody>${rows || `<tr><td colspan="7" class="muted">No items yet.</td></tr>`}</tbody>
+            </table>
+            <div class="totals"><strong>Meal ${idx+1} total:</strong>
+              Protein ${round1(t.p)} g · Carbs ${round1(t.c)} g · Fat ${round1(t.f)} g · Calories ${t.kcal} kcal
+            </div>
+          </div>
+        `);
+      });
+
+      $('dayTotal').innerHTML = `
+        Protein <strong>${round1(day.p)}</strong> g ·
+        Carbs <strong>${round1(day.c)}</strong> g ·
+        Fat <strong>${round1(day.f)}</strong> g ·
+        Calories <strong>${day.kcal}</strong> kcal
+      `;
+
+      // Hook up delete buttons
+      wrap.querySelectorAll('button[data-del]').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+          const [m,i] = btn.dataset.del.split(':').map(Number);
+          const data = loadDay();
+          data.meals[m].splice(i,1);
+          saveDay(data);
+          render();
+        });
+      });
+    }
+
+    $('resetDay').addEventListener('click', () => {
+      localStorage.removeItem(todayKey());
+      render();
+    });
+
+    // Initial UI
+    fillPortions(findFoodByName('Banana')); // preload something
+    updatePreview();
+    render();
+  </script>
+
+  <!-- Service worker registration (keep this) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js', { scope: './' })
+          .catch(err => console.error('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
