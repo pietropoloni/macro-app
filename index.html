@@ -5,59 +5,68 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#0ea5e9" />
   <link rel="manifest" href="manifest.json" />
-  <title>Macro App (meals demo)</title>
+  <title>Macro App — Meals + Open Food Facts</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 720px; }
     h1 { margin-bottom: .25rem; }
     .muted { color:#555; font-size:.9rem; margin-bottom:1rem; }
-    .row { display:grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap:.5rem; align-items:end; }
+    .row { display:grid; grid-template-columns: 1fr 1.2fr 1fr 1fr auto; gap:.5rem; align-items:end; }
     label { font-size:.9rem; }
     input, select { width:100%; padding:.55rem; border:1px solid #ccc; border-radius:.5rem; }
     button { padding:.6rem 1rem; border:1px solid #ddd; border-radius:.7rem; cursor:pointer; background:#fff; }
     .card { padding:1rem; border:1px solid #ddd; border-radius:.75rem; margin-bottom:1rem; }
     table { width:100%; border-collapse: collapse; margin-top:.5rem; }
     th, td { padding:.5rem; border-bottom:1px solid #eee; text-align:left; }
+    th.right, td.right { text-align:right; }
     .totals { background:#f7f7f7; border-radius:.5rem; padding:.6rem .8rem; margin-top:.5rem; }
     .meal-title { display:flex; justify-content:space-between; align-items:center; }
     .pill { font-size:.8rem; padding:.2rem .5rem; border:1px solid #ddd; border-radius:999px; background:#fff; }
-    .right { text-align:right; }
+    .hint { font-size:.8rem; color:#666; margin-top:.25rem; }
+    .error { color:#b00020; font-size:.9rem; }
   </style>
 </head>
 <body>
-  <h1>🍽️ Macro Counter — Meals</h1>
-  <p class="muted">Pick a meal (1–6), choose a food and portion, then <strong>Add</strong>. Values are estimates per 100g and stored offline. You can go offline and it still works.</p>
+  <h1>🍽️ Macro Counter — Meals (OFF)</h1>
+  <p class="muted">
+    Pick a meal (1–6). Start typing a food (we query Open Food Facts), choose a portion or grams, then <strong>Add</strong>.
+    Works offline; when offline we use a tiny built-in list.
+  </p>
 
   <div class="card">
     <div class="row">
       <div>
         <label>Meal</label>
         <select id="meal">
-          <option value="0">Meal 1</option>
-          <option value="1">Meal 2</option>
-          <option value="2">Meal 3</option>
-          <option value="3">Meal 4</option>
-          <option value="4">Meal 5</option>
-          <option value="5">Meal 6</option>
+          <option value="0">Meal 1</option><option value="1">Meal 2</option>
+          <option value="2">Meal 3</option><option value="3">Meal 4</option>
+          <option value="4">Meal 5</option><option value="5">Meal 6</option>
         </select>
       </div>
+
       <div>
         <label>Food</label>
-        <input id="foodInput" list="foodlist" placeholder="e.g., banana, oats, pasta (cooked)">
+        <input id="foodInput" list="foodlist" placeholder="e.g., banana, oats, pasta cooked">
         <datalist id="foodlist"></datalist>
+        <div id="netMsg" class="hint"></div>
       </div>
+
       <div>
         <label>Portion</label>
         <select id="portion"></select>
       </div>
+
       <div>
         <label>Grams</label>
         <input id="grams" type="number" min="1" step="1" value="100">
       </div>
+
       <div>
         <button id="addBtn">Add</button>
       </div>
     </div>
+
     <div id="preview" class="totals" style="display:none;"></div>
+    <div id="err" class="error" style="display:none;"></div>
   </div>
 
   <div id="meals"></div>
@@ -71,112 +80,180 @@
   </div>
 
   <script>
-    // ---- Mini food database (per 100g) ----
-    // Simple, offline, approximate values. You can add/edit later.
-    const FOODS = [
+    // ---------- Helpers ----------
+    const $ = id => document.getElementById(id);
+    const todayKey = () => 'meals-' + new Date().toISOString().slice(0,10);
+    const kcal = (p,c,f) => Math.round(p*4 + c*4 + f*9);
+    const round1 = x => Math.round(x*10)/10;
+    const online = () => navigator.onLine;
+
+    function defaultDay(){ return { meals:[[],[],[],[],[],[]] }; }
+    function loadDay(){ try{ return JSON.parse(localStorage.getItem(todayKey())) || defaultDay(); } catch { return defaultDay(); } }
+    function saveDay(data){ localStorage.setItem(todayKey(), JSON.stringify(data)); }
+
+    // Built-in fallback foods (used when offline or API fails)
+    const FALLBACK_FOODS = [
       {name:'Banana', p:1.1, c:23.0, f:0.3, portions:[{label:'100 g',g:100},{label:'1 medium (118 g)',g:118}]},
-      {name:'Oats (dry)', p:13.2, c:67.7, f:6.5, portions:[{label:'100 g',g:100},{label:'½ cup dry (40 g)',g:40},{label:'Bowl (60 g)',g:60}]},
-      {name:'Pasta (cooked)', p:5.8, c:30.0, f:1.1, portions:[{label:'100 g',g:100},{label:'1 cup cooked (140 g)',g:140},{label:'Plate (250 g)',g:250}]},
-      {name:'Rice (cooked, white)', p:2.4, c:28.0, f:0.3, portions:[{label:'100 g',g:100},{label:'1 cup (158 g)',g:158},{label:'Bowl (150 g)',g:150}]},
-      {name:'Chicken breast (cooked)', p:31.0, c:0.0, f:3.6, portions:[{label:'100 g',g:100},{label:'1 breast (120 g)',g:120}]},
-      {name:'Olive oil', p:0.0, c:0.0, f:100.0, portions:[{label:'1 tsp (4.5 g)',g:4.5},{label:'1 tbsp (14 g)',g:14},{label:'100 g',g:100}]},
-      {name:'Egg (whole)', p:12.6, c:1.1, f:10.6, portions:[{label:'1 large (50 g)',g:50},{label:'100 g',g:100}]},
-      {name:'Milk (2%)', p:3.4, c:5.0, f:1.5, portions:[{label:'1 cup (244 g)',g:244},{label:'100 g',g:100}]},
-      {name:'Greek yogurt (0%)', p:10.0, c:3.6, f:0.4, portions:[{label:'1 container (170 g)',g:170},{label:'100 g',g:100}]},
-      {name:'Peanut butter', p:25.0, c:20.0, f:50.0, portions:[{label:'1 tbsp (16 g)',g:16},{label:'2 tbsp (32 g)',g:32},{label:'100 g',g:100}]},
-      {name:'Apple', p:0.3, c:14.0, f:0.2, portions:[{label:'1 medium (182 g)',g:182},{label:'100 g',g:100}]},
-      {name:'Bread (white)', p:8.7, c:49.0, f:3.3, portions:[{label:'1 slice (38 g)',g:38},{label:'100 g',g:100}]}
+      {name:'Oats (dry)', p:13.2, c:67.7, f:6.5, portions:[{label:'100 g',g:100},{label:'Bowl (60 g)',g:60}]},
+      {name:'Pasta (cooked)', p:5.8, c:30.0, f:1.1, portions:[{label:'100 g',g:100},{label:'Plate (250 g)',g:250}]}
     ];
 
-    // ---- Helpers ----
-    const $ = id => document.getElementById(id);
-    const todayKey = () => 'meals-' + new Date().toISOString().slice(0,10); // e.g. meals-2025-08-24
-    const kcal = (p,c,f) => Math.round((p*4 + c*4 + f*9));
+    // ---------- Open Food Facts search ----------
+    // We query OFF v2 search for product_name, brands, nutriments, serving_size.
+    // Docs: /api/v2/search (select fields, nutrient keys end with _100g). :contentReference[oaicite:1]{index=1}
+    const OFF_BASE = 'https://world.openfoodfacts.org/api/v2/search';
 
-    function round1(x){ return Math.round(x*10)/10; }
+    let lastResults = []; // cache of the latest OFF results for the current query
 
-    function defaultDay(){
-      return { meals:[[],[],[],[],[],[]] }; // 6 meals, each an array of items
+    // Utility: make a nice label and normalize nutriments
+    function normalizeProduct(p){
+      const name = (p.product_name || 'Unnamed').trim();
+      const brand = (p.brands || '').split(',')[0]?.trim();
+      const label = brand ? `${name} — ${brand}` : name;
+
+      const n = p.nutriments || {};
+      const p100 = Number(n.proteins_100g) || 0;
+      const c100 = Number(n.carbohydrates_100g) || 0;
+      const f100 = Number(n.fat_100g) || 0;
+      let kcal100 = Number(n['energy-kcal_100g']);
+      if (!kcal100 && (p100||c100||f100)) kcal100 = Math.round(p100*4 + c100*4 + f100*9);
+
+      // Try to parse serving size in grams, e.g. "150 g"
+      let servingG = null;
+      const ss = (p.serving_size || '').toLowerCase();
+      const m = ss.match(/([\d.]+)\s*g/);
+      if (m) servingG = Number(m[1]);
+
+      const portions = [{label:'100 g', g:100}];
+      if (servingG) portions.unshift({label:`1 serving (${servingG} g)`, g:servingG});
+
+      return { code:p.code, label, name, gramsDefault: servingG || 100, p100, c100, f100, kcal100: kcal100||null, portions };
     }
 
-    function loadDay(){
-      try { return JSON.parse(localStorage.getItem(todayKey())) || defaultDay(); }
-      catch { return defaultDay(); }
+    // Debounce helper so we don't spam the API while typing
+    function debounce(fn, ms=250){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
+
+    async function searchOFF(query){
+      const params = new URLSearchParams({
+        fields: 'code,product_name,brands,nutriments,serving_size',
+        page_size: '12',
+        sort_by: 'popularity_key',
+        search_text: query
+      });
+      const url = `${OFF_BASE}?${params.toString()}`;
+      const res = await fetch(url);           // CORS supported by OFF in production. :contentReference[oaicite:2]{index=2}
+      const data = await res.json();
+      const products = (data.products || []).map(normalizeProduct)
+        // need at least some macros to be useful:
+        .filter(x => (x.p100||x.c100||x.f100));
+      lastResults = products;
+      return products;
     }
 
-    function saveDay(data){
-      localStorage.setItem(todayKey(), JSON.stringify(data));
-    }
-
-    // ---- UI setup ----
-    // Fill datalist with foods
+    // ---------- UI wiring for search + preview ----------
+    const foodInput = $('foodInput');
     const foodlist = $('foodlist');
-    FOODS.forEach(f => {
-      const o = document.createElement('option');
-      o.value = f.name;
-      foodlist.appendChild(o);
-    });
+    const portionSel = $('portion');
+    const gramsBox = $('grams');
+    const previewBox = $('preview');
+    const errBox = $('err');
+    const netMsg = $('netMsg');
 
-    function findFoodByName(name){
-      return FOODS.find(f => f.name.toLowerCase() === String(name||'').toLowerCase());
-    }
-
-    function fillPortions(food){
-      const sel = $('portion');
-      sel.innerHTML = '';
-      (food?.portions || [{label:'100 g', g:100}]).forEach(p =>
-        sel.insertAdjacentHTML('beforeend', `<option value="${p.g}">${p.label}</option>`)
+    function fillPortionsPortals(item){
+      portionSel.innerHTML = '';
+      (item.portions||[{label:'100 g',g:100}]).forEach(p =>
+        portionSel.insertAdjacentHTML('beforeend', `<option value="${p.g}">${p.label}</option>`)
       );
-      // set grams box from first portion
-      if (sel.options.length) $('grams').value = sel.options[0].value;
+      gramsBox.value = item.gramsDefault || (portionSel.value || 100);
     }
 
-    // When food changes, update portions and preview
-    $('foodInput').addEventListener('input', () => {
-      const food = findFoodByName($('foodInput').value);
-      fillPortions(food);
-      updatePreview();
-    });
-
-    $('portion').addEventListener('change', () => {
-      $('grams').value = $('portion').value;
-      updatePreview();
-    });
-    $('grams').addEventListener('input', updatePreview);
-    $('meal').addEventListener('change', updatePreview);
-
-    function updatePreview(){
-      const food = findFoodByName($('foodInput').value);
-      const g = Math.max(1, Number($('grams').value)||0);
-      const box = $('preview');
-      if (!food) { box.style.display='none'; return; }
-      const p = (food.p*g/100), c = (food.c*g/100), f = (food.f*g/100);
-      box.style.display='block';
-      box.innerHTML = `<strong>Item preview</strong> — ${food.name}, ${g} g<br>
+    function setPreviewFromItem(item){
+      const g = Math.max(1, Number(gramsBox.value)||0);
+      const p = item.p100 * g/100, c = item.c100 * g/100, f = item.f100 * g/100;
+      previewBox.style.display = 'block';
+      previewBox.innerHTML = `<strong>Item preview</strong> — ${item.name}, ${g} g<br>
         Protein: ${round1(p)} g · Carbs: ${round1(c)} g · Fat: ${round1(f)} g<br>
         Calories: ${kcal(p,c,f)} kcal`;
+      errBox.style.display = 'none';
     }
 
-    // ---- Add item ----
-    $('addBtn').addEventListener('click', () => {
-      const mealIdx = Number($('meal').value);
-      const name = $('foodInput').value.trim();
-      const food = findFoodByName(name);
-      const g = Math.max(1, Number($('grams').value)||0);
+    const offlineFind = (name) => {
+      const n = String(name||'').toLowerCase();
+      return FALLBACK_FOODS.find(f => f.name.toLowerCase().includes(n));
+    };
 
-      if (!food) { alert('Pick a food from the list.'); return; }
+    const doSuggest = debounce(async () => {
+      const q = foodInput.value.trim();
+      if (!q) { foodlist.innerHTML=''; previewBox.style.display='none'; return; }
 
-      const p = round1(food.p*g/100), c = round1(food.c*g/100), f = round1(food.f*g/100);
-      const item = { name: food.name, grams: g, p, c, f, kcal: kcal(p,c,f) };
+      // show network state
+      netMsg.textContent = online() ? '' : 'Offline: using built-in foods only';
 
-      const data = loadDay();
-      data.meals[mealIdx].push(item);
-      saveDay(data);
-      render();
-      // keep preview visible for next add
+      try {
+        let items = [];
+        if (online()) {
+          items = await searchOFF(q);
+        }
+        // Fallback if no API results OR offline
+        if (!items.length) {
+          const fb = offlineFind(q);
+          if (fb) {
+            const fake = { code:'fallback', label: fb.name, name: fb.name,
+              gramsDefault: (fb.portions[0]?.g)||100,
+              p100: fb.p, c100: fb.c, f100: fb.f,
+              kcal100: Math.round(fb.p*4 + fb.c*4 + fb.f*9),
+              portions: fb.portions
+            };
+            items = [fake];
+            lastResults = items;
+          }
+        }
+
+        // populate datalist
+        foodlist.innerHTML = '';
+        items.slice(0,12).forEach(it => {
+          const opt = document.createElement('option');
+          opt.value = it.label;
+          foodlist.appendChild(opt);
+        });
+
+        // if we have a first item, preload its portions + preview
+        if (items[0]) {
+          fillPortionsPortals(items[0]);
+          setPreviewFromItem(items[0]);
+        } else {
+          previewBox.style.display='none';
+        }
+      } catch (e) {
+        errBox.style.display='block';
+        errBox.textContent = 'Could not reach Open Food Facts. Using offline list if available.';
+        // fallback
+        const fb = offlineFind(q);
+        if (fb) {
+          const fake = { code:'fallback', label: fb.name, name: fb.name,
+            gramsDefault: (fb.portions[0]?.g)||100, p100: fb.p, c100: fb.c, f100: fb.f,
+            kcal100: Math.round(fb.p*4 + fb.c*4 + fb.f*9), portions: fb.portions
+          };
+          lastResults = [fake];
+          fillPortionsPortals(fake);
+          setPreviewFromItem(fake);
+        }
+      }
+    }, 300);
+
+    foodInput.addEventListener('input', doSuggest);
+    portionSel.addEventListener('change', () => { gramsBox.value = portionSel.value; if (lastChosen) setPreviewFromItem(lastChosen); });
+    gramsBox.addEventListener('input', () => { if (lastChosen) setPreviewFromItem(lastChosen); });
+
+    // when user leaves the input, try to lock on the selected label
+    let lastChosen = null;
+    foodInput.addEventListener('change', () => {
+      const label = foodInput.value.trim();
+      const it = lastResults.find(x => x.label === label) || lastResults[0];
+      if (it) { lastChosen = it; fillPortionsPortals(it); setPreviewFromItem(it); }
     });
 
-    // ---- Render meals and totals ----
+    // ---------- Add item to meal ----------
     function mealTotals(items){
       return items.reduce((t,x)=>({p:t.p+x.p, c:t.c+x.c, f:t.f+x.f, kcal:t.kcal+x.kcal}), {p:0,c:0,f:0,kcal:0});
     }
@@ -185,7 +262,6 @@
       const data = loadDay();
       const wrap = $('meals');
       wrap.innerHTML = '';
-
       let day = {p:0,c:0,f:0,kcal:0};
 
       data.meals.forEach((items, idx) => {
@@ -232,30 +308,49 @@
         Calories <strong>${day.kcal}</strong> kcal
       `;
 
-      // Hook up delete buttons
+      // deletions
       wrap.querySelectorAll('button[data-del]').forEach(btn=>{
         btn.addEventListener('click',()=>{
           const [m,i] = btn.dataset.del.split(':').map(Number);
           const data = loadDay();
           data.meals[m].splice(i,1);
-          saveDay(data);
-          render();
+          saveDay(data); render();
         });
       });
     }
 
-    $('resetDay').addEventListener('click', () => {
-      localStorage.removeItem(todayKey());
+    $('addBtn').addEventListener('click', () => {
+      const mealIdx = Number($('meal').value);
+      const label = foodInput.value.trim();
+
+      // choose from exact label if possible, else first result, else fallback list
+      let it = lastResults.find(x => x.label === label) || lastResults[0];
+      if (!it) {
+        const fb = offlineFind(label);
+        if (fb) it = { name: fb.name, p100:fb.p, c100:fb.c, f100:fb.f, gramsDefault:(fb.portions[0]?.g)||100 };
+      }
+      if (!it) { alert('Pick a food from the list or type a known one like “banana”.'); return; }
+
+      const g = Math.max(1, Number(gramsBox.value)|| (it.gramsDefault||100) );
+      const p = round1(it.p100*g/100), c = round1(it.c100*g/100), f = round1(it.f100*g/100);
+      const item = { name: it.name || label, grams: g, p, c, f, kcal: kcal(p,c,f) };
+
+      const data = loadDay();
+      data.meals[mealIdx].push(item);
+      saveDay(data);
       render();
+      setPreviewFromItem(it);
     });
 
-    // Initial UI
-    fillPortions(findFoodByName('Banana')); // preload something
-    updatePreview();
+    $('resetDay').addEventListener('click', () => { localStorage.removeItem(todayKey()); render(); });
+
+    // initial paint + a first suggestion to show the flow
+    foodInput.value = 'banana';
+    doSuggest();
     render();
   </script>
 
-  <!-- Service worker registration (keep this) -->
+  <!-- Service worker registration (unchanged) -->
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
