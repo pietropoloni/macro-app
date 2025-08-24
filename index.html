@@ -110,17 +110,46 @@
     ];
 
     // ---------- Open Food Facts search ----------
-   // Use v1 search endpoint (supports free-text "search_terms")
 const OFF_BASE = 'https://world.openfoodfacts.org/cgi/search.pl';
+let lastResults = []; // latest suggestions for current query
 
+// Make a nice label and normalize nutriments (per 100g)
+function normalizeProduct(p){
+  const name = (p.product_name || 'Unnamed').trim();
+  const brand = (p.brands || '').split(',')[0]?.trim();
+  const label = brand ? `${name} — ${brand}` : name;
+
+  const n = p.nutriments || {};
+  const p100 = Number(n.proteins_100g) || 0;
+  const c100 = Number(n.carbohydrates_100g) || 0;
+  const f100 = Number(n.fat_100g) || 0;
+  let kcal100 = Number(n['energy-kcal_100g']);
+  if (!kcal100 && (p100||c100||f100)) kcal100 = Math.round(p100*4 + c100*4 + f100*9);
+
+  // Parse serving size like "150 g" if present
+  let servingG = null;
+  const ss = (p.serving_size || '').toLowerCase();
+  const m = ss.match(/([\d.]+)\s*g/);
+  if (m) servingG = Number(m[1]);
+
+  const portions = [{label:'100 g', g:100}];
+  if (servingG) portions.unshift({label:`1 serving (${servingG} g)`, g:servingG});
+
+  return { code:p.code, label, name, gramsDefault: servingG || 100, p100, c100, f100, kcal100: kcal100||null, portions };
+}
+
+// Debounce helper so we don't spam the API while typing
+function debounce(fn, ms=250){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
+
+// v1 search endpoint (supports free-text "search_terms")
 async function searchOFF(query){
   const params = new URLSearchParams({
-    search_terms: query,          // ← this is the important bit
+    search_terms: query,
     search_simple: '1',
     page_size: '12',
     json: '1',
     nocache: '1',
-    lc: 'en',                     // ask results in English when possible
+    lc: 'en',
     fields: 'code,product_name,brands,nutriments,serving_size'
   });
   const url = `${OFF_BASE}?${params.toString()}`;
@@ -128,60 +157,14 @@ async function searchOFF(query){
   const data = await res.json();
 
   const products = (data.products || [])
-    .map(normalizeProduct)                // your existing function
-    .filter(x => (x.p100 || x.c100 || x.f100)); // keep items with macros
+    .map(normalizeProduct)
+    .filter(x => (x.p100 || x.c100 || x.f100)); // keep only items with macros
 
   lastResults = products;
   return products;
 }
- query
+// ---------- UI wiring for search + preview ----------
 
-    // Utility: make a nice label and normalize nutriments
-    function normalizeProduct(p){
-      const name = (p.product_name || 'Unnamed').trim();
-      const brand = (p.brands || '').split(',')[0]?.trim();
-      const label = brand ? `${name} — ${brand}` : name;
-
-      const n = p.nutriments || {};
-      const p100 = Number(n.proteins_100g) || 0;
-      const c100 = Number(n.carbohydrates_100g) || 0;
-      const f100 = Number(n.fat_100g) || 0;
-      let kcal100 = Number(n['energy-kcal_100g']);
-      if (!kcal100 && (p100||c100||f100)) kcal100 = Math.round(p100*4 + c100*4 + f100*9);
-
-      // Try to parse serving size in grams, e.g. "150 g"
-      let servingG = null;
-      const ss = (p.serving_size || '').toLowerCase();
-      const m = ss.match(/([\d.]+)\s*g/);
-      if (m) servingG = Number(m[1]);
-
-      const portions = [{label:'100 g', g:100}];
-      if (servingG) portions.unshift({label:`1 serving (${servingG} g)`, g:servingG});
-
-      return { code:p.code, label, name, gramsDefault: servingG || 100, p100, c100, f100, kcal100: kcal100||null, portions };
-    }
-
-    // Debounce helper so we don't spam the API while typing
-    function debounce(fn, ms=250){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
-
-    async function searchOFF(query){
-      const params = new URLSearchParams({
-        fields: 'code,product_name,brands,nutriments,serving_size',
-        page_size: '12',
-        sort_by: 'popularity_key',
-        search_text: query
-      });
-      const url = `${OFF_BASE}?${params.toString()}`;
-      const res = await fetch(url);           // CORS supported by OFF in production. :contentReference[oaicite:2]{index=2}
-      const data = await res.json();
-      const products = (data.products || []).map(normalizeProduct)
-        // need at least some macros to be useful:
-        .filter(x => (x.p100||x.c100||x.f100));
-      lastResults = products;
-      return products;
-    }
-
-    // ---------- UI wiring for search + preview ----------
     const foodInput = $('foodInput');
     const foodlist = $('foodlist');
     const portionSel = $('portion');
@@ -392,5 +375,6 @@ async function searchOFF(query){
   </script>
 </body>
 </html>
+
 
 
