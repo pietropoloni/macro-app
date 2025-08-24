@@ -110,11 +110,31 @@
     ];
 
     // ---------- Open Food Facts search ----------
-    // We query OFF v2 search for product_name, brands, nutriments, serving_size.
-    // Docs: /api/v2/search (select fields, nutrient keys end with _100g). :contentReference[oaicite:1]{index=1}
-    const OFF_BASE = 'https://world.openfoodfacts.org/api/v2/search';
+   // Use v1 search endpoint (supports free-text "search_terms")
+const OFF_BASE = 'https://world.openfoodfacts.org/cgi/search.pl';
 
-    let lastResults = []; // cache of the latest OFF results for the current query
+async function searchOFF(query){
+  const params = new URLSearchParams({
+    search_terms: query,          // ← this is the important bit
+    search_simple: '1',
+    page_size: '12',
+    json: '1',
+    nocache: '1',
+    lc: 'en',                     // ask results in English when possible
+    fields: 'code,product_name,brands,nutriments,serving_size'
+  });
+  const url = `${OFF_BASE}?${params.toString()}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const products = (data.products || [])
+    .map(normalizeProduct)                // your existing function
+    .filter(x => (x.p100 || x.c100 || x.f100)); // keep items with macros
+
+  lastResults = products;
+  return products;
+}
+ query
 
     // Utility: make a nice label and normalize nutriments
     function normalizeProduct(p){
@@ -372,4 +392,5 @@
   </script>
 </body>
 </html>
+
 
