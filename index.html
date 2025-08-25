@@ -38,7 +38,6 @@
     }
 
     .container{ margin: 0 auto; padding: 0 20px 32px; max-width: 720px; }
-    h1 { margin-bottom: .25rem; }
     .muted { color:#555; font-size:.9rem; margin-bottom:1rem; }
     .row { display:grid; grid-template-columns: 0.9fr 1.6fr 0.7fr 0.8fr auto; gap:.5rem; align-items:end; }
     label { font-size:.9rem; }
@@ -82,6 +81,7 @@
       Works offline; when offline we use a tiny built-in list.
     </p>
 
+    <!-- Input card -->
     <div class="card">
       <div class="row">
         <div>
@@ -128,8 +128,7 @@
       <div id="err" class="error" style="display:none;"></div>
     </div>
 
-    <div id="meals"></div>
-
+    <!-- Day total (now shown ABOVE the meals) -->
     <div class="card">
       <div class="section-title">
         <strong>Day total</strong>
@@ -143,6 +142,9 @@
         <small>Targets — Carbs 324–405 g · Protein 115–146 g · Fat 65–97 g · Calories 2330–3080 kcal</small>
       </div>
     </div>
+
+    <!-- Meals appear only when they have items -->
+    <div id="meals"></div>
 
     <!-- History viewer -->
     <div id="historyCard" class="card" style="display:none;">
@@ -392,9 +394,12 @@
       wrap.innerHTML = '';
       let day = {p:0,c:0,f:0,kcal:0};
 
+      // Build cards only for meals that have items
       data.meals.forEach((items, idx) => {
         const t = mealTotals(items);
         day.p += t.p; day.c += t.c; day.f += t.f; day.kcal += t.kcal;
+
+        if (items.length === 0) return; // skip empty meals (hidden until first add)
 
         const rows = items.map((x,i)=>`
           <tr>
@@ -420,7 +425,7 @@
                 <th class="right">P (g)</th><th class="right">C (g)</th><th class="right">F (g)</th>
                 <th class="right">kcal</th><th></th>
               </tr></thead>
-              <tbody>${rows || `<tr><td colspan="7" class="muted">No items yet.</td></tr>`}</tbody>
+              <tbody>${rows}</tbody>
             </table>
             <div class="totals"><strong>Meal ${idx+1} total:</strong>
               Protein ${round1(t.p)} g · Carbs ${round1(t.c)} g · Fat ${round1(t.f)} g · Calories ${t.kcal} kcal
@@ -447,7 +452,7 @@
         </div>
       `;
 
-      // deletions
+      // Hook deletions (and auto-hide empty meals on next render)
       wrap.querySelectorAll('button[data-del]').forEach(btn=>{
         btn.addEventListener('click',()=>{
           const [m,i] = btn.dataset.del.split(':').map(Number);
@@ -477,7 +482,7 @@
       const data = loadDay();
       data.meals[mealIdx].push(item);
       saveDay(data);
-      render();
+      render();                // will now show the meal if it was previously hidden
       setPreviewFromItem(it);
     });
 
@@ -494,7 +499,7 @@
     $('resetDay').addEventListener('click', () => {
       localStorage.removeItem(todayKey());
       saveDay(defaultDay()); // also updates lastActiveDate
-      render();
+      render();              // meals container will be empty/hidden
     });
 
     // History UI
@@ -512,8 +517,7 @@
     }
 
     // initial paint + a first suggestion to show the flow
-    foodInput.value = 'banana';
-    // Trigger initial suggestions only when online
+    $('foodInput').value = 'banana';
     if (online()) { (async()=>{ try{ await searchOFF('banana'); }catch{} })(); }
     render();
   </script>
