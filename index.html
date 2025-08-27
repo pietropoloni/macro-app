@@ -429,19 +429,26 @@
       saveHistoryEntry(localDateStr(), {p:round1(day.p), c:round1(day.c), f:round1(day.f), kcal:day.kcal});
 
       // Day totals vs targets with colouring
-      const pStat = statusOf(day.p, TARGETS.p);
-      const cStat = statusOf(day.c, TARGETS.c);
-      const fStat = statusOf(day.f, TARGETS.f);
-      const kStat = statusOf(day.kcal, TARGETS.kcal);
+const pStat = statusOf(day.p, TARGETS.p);
+const cStat = statusOf(day.c, TARGETS.c);
+const fStat = statusOf(day.f, TARGETS.f);
+const kStat = statusOf(day.kcal, TARGETS.kcal);
 
-      $('dayTotal').innerHTML = `
-        <div>
-          <span class="stat ${pStat}">Protein ${round1(day.p)} g</span><br>
-          <span class="stat ${cStat}">Carbs ${round1(day.c)} g</span><br>
-          <span class="stat ${fStat}">Fat ${round1(day.f)} g</span><br>
-          <span class="stat ${kStat}">Calories ${day.kcal} kcal</span>
-        </div>
-      `;
+$('dayTotal').innerHTML = `
+  <div>
+    <span class="stat ${pStat}">Protein ${round1(day.p)} g</span>
+    <small>(target ${TARGETS.p.min}–${TARGETS.p.max})</small><br>
+
+    <span class="stat ${cStat}">Carbs ${round1(day.c)} g</span>
+    <small>(target ${TARGETS.c.min}–${TARGETS.c.max})</small><br>
+
+    <span class="stat ${fStat}">Fat ${round1(day.f)} g</span>
+    <small>(target ${TARGETS.f.min}–${TARGETS.f.max})</small><br>
+
+    <span class="stat ${kStat}">Calories ${day.kcal} kcal</span>
+    <small>(target ${TARGETS.kcal.min}–${TARGETS.kcal.max})</small>
+  </div>
+`;
 
       // deletions
       wrap.querySelectorAll('button[data-del]').forEach(btn=>{
@@ -551,3 +558,4 @@
   </script>
 </body>
 </html>
+
