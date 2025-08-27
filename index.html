@@ -38,8 +38,8 @@
     }
 
     .container{ margin: 0 auto; padding: 0 20px 32px; max-width: 720px; }
-    .muted { color:#555; font-size:.9rem; margin-bottom:1rem; }
     .row { display:grid; grid-template-columns: 0.9fr 1.6fr 0.7fr 0.8fr auto; gap:.5rem; align-items:end; }
+    .row-manual { display:grid; grid-template-columns: 1.4fr 0.8fr 0.8fr 0.8fr 0.9fr auto; gap:.5rem; align-items:end; }
     label { font-size:.9rem; }
     input, select { width:100%; padding:.55rem; border:1px solid #ccc; border-radius:.5rem; }
     #portion{ max-width:120px; } /* smaller portion select for mobile fit */
@@ -53,7 +53,6 @@
     .pill { font-size:.8rem; padding:.2rem .5rem; border:1px solid #ddd; border-radius:999px; background:#fff; }
     .hint { font-size:.8rem; color:#666; margin-top:.25rem; }
     .error { color:#b00020; font-size:.9rem; }
-    .targets small{ color:#666; }
     .stat { font-weight:600; }
     .stat.ok { color: var(--ok); }
     .stat.low { color: var(--low); }
@@ -66,6 +65,7 @@
 
     @media (max-width: 520px){
       .row{ grid-template-columns: 1fr 1fr; }
+      .row-manual{ grid-template-columns: 1fr 1fr; }
       #portion{ max-width: 100%; }
     }
   </style>
@@ -76,12 +76,7 @@
   </header>
 
   <div class="container">
-    <p class="muted">
-      Pick a meal (1–6). Start typing a food (we query Open Food Facts), choose a portion or grams, then <strong>Add</strong>.
-      Works offline; when offline we use a tiny built-in list.
-    </p>
-
-    <!-- Input card -->
+    <!-- Input card (API + preset) -->
     <div class="card">
       <div class="row">
         <div>
@@ -117,18 +112,46 @@
 
       <!-- Presets -->
       <div style="margin-top:.75rem; display:flex; gap:.5rem; align-items:center;">
-        <label class="muted" style="margin:0;">Preset:</label>
+        <label class="hint" style="margin:0;">Preset:</label>
         <select id="presetSel" style="max-width:220px;">
           <option value="morning_oats">Morning Oats (P31 · C70.4 · F10.7)</option>
         </select>
         <button id="addPresetBtn">Add Preset to Meal</button>
       </div>
-
-      <div id="preview" class="totals" style="display:none;"></div>
-      <div id="err" class="error" style="display:none;"></div>
     </div>
 
-    <!-- Day total (now shown ABOVE the meals) -->
+    <!-- Manual entry card -->
+    <div class="card">
+      <div class="section-title"><strong>Manual entry</strong><span class="hint">Use this if the API is missing or offline</span></div>
+      <div class="row-manual">
+        <div>
+          <label>Name</label>
+          <input id="mName" type="text" placeholder="e.g., Homemade wrap">
+        </div>
+        <div>
+          <label>Protein (g)</label>
+          <input id="mP" type="number" min="0" step="0.1" placeholder="0">
+        </div>
+        <div>
+          <label>Carbs (g)</label>
+          <input id="mC" type="number" min="0" step="0.1" placeholder="0">
+        </div>
+        <div>
+          <label>Fat (g)</label>
+          <input id="mF" type="number" min="0" step="0.1" placeholder="0">
+        </div>
+        <div>
+          <label>kcal</label>
+          <input id="mK" type="number" min="0" step="1" placeholder="auto">
+        </div>
+        <div>
+          <button id="addManualBtn">Add Manual</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:.35rem;">Tip: If kcal is empty, we calculate it from P/C/F.</div>
+    </div>
+
+    <!-- Day total (ABOVE meals) -->
     <div class="card">
       <div class="section-title">
         <strong>Day total</strong>
@@ -138,9 +161,6 @@
         </div>
       </div>
       <div id="dayTotal" class="totals"></div>
-      <div class="targets" style="margin-top:.5rem;">
-        <small>Targets — Carbs 324–405 g · Protein 115–146 g · Fat 65–97 g · Calories 2330–3080 kcal</small>
-      </div>
     </div>
 
     <!-- Meals appear only when they have items -->
@@ -180,7 +200,7 @@
       localStorage.setItem('lastActiveDate', localDateStr());
     }
 
-    // Targets (ranges)
+    // Targets (ranges) used for colouring
     const TARGETS = {
       c: {min:324, max:405},   // carbs
       p: {min:115, max:146},   // protein
@@ -195,8 +215,7 @@
     function saveHistoryEntry(dateStr, totals){
       let idx = historyIndex();
       if (!idx.includes(dateStr)) idx.push(dateStr);
-      // keep only last 90 (oldest first)
-      idx.sort(); // chronological
+      idx.sort();
       while (idx.length > 90){
         const old = idx.shift();
         localStorage.removeItem('history:'+old);
@@ -204,7 +223,6 @@
       setHistoryIndex(idx);
       localStorage.setItem('history:'+dateStr, JSON.stringify(totals));
     }
-    // If last active date is yesterday (or older), archive it once
     (function ensurePreviousDayArchived(){
       const today = localDateStr();
       const last = localStorage.getItem('lastActiveDate');
@@ -229,35 +247,27 @@
     const OFF_BASE = 'https://world.openfoodfacts.org/cgi/search.pl';
     let lastResults = []; // latest suggestions for current query
 
-    // Make a nice label and normalize nutriments (per 100g)
     function normalizeProduct(p){
       const name = (p.product_name || 'Unnamed').trim();
       const brand = (p.brands || '').split(',')[0]?.trim();
       const label = brand ? `${name} — ${brand}` : name;
-
       const n = p.nutriments || {};
       const p100 = Number(n.proteins_100g) || 0;
       const c100 = Number(n.carbohydrates_100g) || 0;
       const f100 = Number(n.fat_100g) || 0;
       let kcal100 = Number(n['energy-kcal_100g']);
       if (!kcal100 && (p100||c100||f100)) kcal100 = Math.round(p100*4 + c100*4 + f100*9);
-
-      // Parse serving size like "150 g" if present
       let servingG = null;
       const ss = (p.serving_size || '').toLowerCase();
       const m = ss.match(/([\d.]+)\s*g/);
       if (m) servingG = Number(m[1]);
-
       const portions = [{label:'100 g', g:100}];
       if (servingG) portions.unshift({label:`1 serving (${servingG} g)`, g:servingG});
-
       return { code:p.code, label, name, gramsDefault: servingG || 100, p100, c100, f100, kcal100: kcal100||null, portions };
     }
 
-    // Debounce helper so we don't spam the API while typing
     function debounce(fn, ms=250){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
 
-    // v1 search endpoint (supports free-text "search_terms")
     async function searchOFF(query){
       const params = new URLSearchParams({
         search_terms: query,
@@ -271,11 +281,9 @@
       const url = `${OFF_BASE}?${params.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
-
       const products = (data.products || [])
         .map(normalizeProduct)
-        .filter(x => (x.p100 || x.c100 || x.f100)); // keep only items with macros
-
+        .filter(x => (x.p100 || x.c100 || x.f100));
       lastResults = products;
       return products;
     }
@@ -315,16 +323,10 @@
     const doSuggest = debounce(async () => {
       const q = foodInput.value.trim();
       if (!q) { foodlist.innerHTML=''; previewBox.style.display='none'; return; }
-
-      // show network state
       netMsg.textContent = online() ? '' : 'Offline: using built-in foods only';
-
       try {
         let items = [];
-        if (online()) {
-          items = await searchOFF(q);
-        }
-        // Fallback if no API results OR offline
+        if (online()) items = await searchOFF(q);
         if (!items.length) {
           const fb = offlineFind(q);
           if (fb) {
@@ -338,26 +340,17 @@
             lastResults = items;
           }
         }
-
-        // populate datalist
         foodlist.innerHTML = '';
         items.slice(0,12).forEach(it => {
           const opt = document.createElement('option');
           opt.value = it.label;
           foodlist.appendChild(opt);
         });
-
-        // if we have a first item, preload its portions + preview
-        if (items[0]) {
-          fillPortionsPortals(items[0]);
-          setPreviewFromItem(items[0]);
-        } else {
-          previewBox.style.display='none';
-        }
+        if (items[0]) { fillPortionsPortals(items[0]); setPreviewFromItem(items[0]); }
+        else { previewBox.style.display='none'; }
       } catch (e) {
         errBox.style.display='block';
         errBox.textContent = 'Could not reach Open Food Facts. Using offline list if available.';
-        // fallback
         const fb = offlineFind(q);
         if (fb) {
           const fake = { code:'fallback', label: fb.name, name: fb.name,
@@ -375,7 +368,6 @@
     portionSel.addEventListener('change', () => { gramsBox.value = portionSel.value; if (lastChosen) setPreviewFromItem(lastChosen); });
     gramsBox.addEventListener('input', () => { if (lastChosen) setPreviewFromItem(lastChosen); });
 
-    // when user leaves the input, try to lock on the selected label
     let lastChosen = null;
     foodInput.addEventListener('change', () => {
       const label = foodInput.value.trim();
@@ -383,7 +375,7 @@
       if (it) { lastChosen = it; fillPortionsPortals(it); setPreviewFromItem(it); }
     });
 
-    // ---------- Add item to meal ----------
+    // ---------- Add item to meal (API/fallback) ----------
     function mealTotals(items){
       return items.reduce((t,x)=>({p:t.p+x.p, c:t.c+x.c, f:t.f+x.f, kcal:t.kcal+x.kcal}), {p:0,c:0,f:0,kcal:0});
     }
@@ -394,12 +386,11 @@
       wrap.innerHTML = '';
       let day = {p:0,c:0,f:0,kcal:0};
 
-      // Build cards only for meals that have items
       data.meals.forEach((items, idx) => {
         const t = mealTotals(items);
         day.p += t.p; day.c += t.c; day.f += t.f; day.kcal += t.kcal;
 
-        if (items.length === 0) return; // skip empty meals (hidden until first add)
+        if (items.length === 0) return;
 
         const rows = items.map((x,i)=>`
           <tr>
@@ -445,14 +436,14 @@
 
       $('dayTotal').innerHTML = `
         <div>
-          <span class="stat ${pStat}">Protein ${round1(day.p)} g</span> <small>(target ${TARGETS.p.min}–${TARGETS.p.max})</small><br>
-          <span class="stat ${cStat}">Carbs ${round1(day.c)} g</span> <small>(target ${TARGETS.c.min}–${TARGETS.c.max})</small><br>
-          <span class="stat ${fStat}">Fat ${round1(day.f)} g</span> <small>(target ${TARGETS.f.min}–${TARGETS.f.max})</small><br>
-          <span class="stat ${kStat}">Calories ${day.kcal} kcal</span> <small>(target ${TARGETS.kcal.min}–${TARGETS.kcal.max})</small>
+          <span class="stat ${pStat}">Protein ${round1(day.p)} g</span><br>
+          <span class="stat ${cStat}">Carbs ${round1(day.c)} g</span><br>
+          <span class="stat ${fStat}">Fat ${round1(day.f)} g</span><br>
+          <span class="stat ${kStat}">Calories ${day.kcal} kcal</span>
         </div>
       `;
 
-      // Hook deletions (and auto-hide empty meals on next render)
+      // deletions
       wrap.querySelectorAll('button[data-del]').forEach(btn=>{
         btn.addEventListener('click',()=>{
           const [m,i] = btn.dataset.del.split(':').map(Number);
@@ -467,7 +458,6 @@
       const mealIdx = Number($('meal').value);
       const label = foodInput.value.trim();
 
-      // choose from exact label if possible, else first result, else fallback list
       let it = lastResults.find(x => x.label === label) || lastResults[0];
       if (!it) {
         const fb = offlineFind(label);
@@ -482,7 +472,7 @@
       const data = loadDay();
       data.meals[mealIdx].push(item);
       saveDay(data);
-      render();                // will now show the meal if it was previously hidden
+      render();
       setPreviewFromItem(it);
     });
 
@@ -496,10 +486,38 @@
       render();
     });
 
+    // Manual add
+    $('addManualBtn').addEventListener('click', ()=>{
+      const mealIdx = Number($('meal').value);
+      const name = $('mName').value.trim();
+      const p = Number($('mP').value) || 0;
+      const c = Number($('mC').value) || 0;
+      const f = Number($('mF').value) || 0;
+      const kIn = $('mK').value.trim();
+      if (!name){ alert('Please enter a name.'); return; }
+      if (!(p || c || f || kIn)){ alert('Enter at least one value (macros or kcal).'); return; }
+
+      let kcalVal = kIn ? Number(kIn) : kcal(p,c,f);
+      if (Number.isNaN(kcalVal)) kcalVal = kcal(p,c,f);
+
+      const item = { name, grams: 0, p: round1(p), c: round1(c), f: round1(f), kcal: Math.round(kcalVal) };
+      const data = loadDay();
+      data.meals[mealIdx].push(item);
+      saveDay(data);
+      render();
+
+      // clear manual fields
+      $('mName').value = '';
+      $('mP').value = '';
+      $('mC').value = '';
+      $('mF').value = '';
+      $('mK').value = '';
+    });
+
     $('resetDay').addEventListener('click', () => {
       localStorage.removeItem(todayKey());
-      saveDay(defaultDay()); // also updates lastActiveDate
-      render();              // meals container will be empty/hidden
+      saveDay(defaultDay());
+      render();
     });
 
     // History UI
@@ -508,8 +526,8 @@
 
     function renderHistory(){
       const list = $('historyList');
-      const idx = historyIndex().slice().sort().reverse(); // latest first
-      if (!idx.length){ list.innerHTML = `<li class="muted">No history yet.</li>`; return; }
+      const idx = historyIndex().slice().sort().reverse();
+      if (!idx.length){ list.innerHTML = `<li style="color:#666;">No history yet.</li>`; return; }
       list.innerHTML = idx.map(d=>{
         const t = JSON.parse(localStorage.getItem('history:'+d) || '{"p":0,"c":0,"f":0,"kcal":0}');
         return `<li><strong>${d}</strong> — Protein ${t.p} g · Carbs ${t.c} g · Fat ${t.f} g · Calories ${t.kcal} kcal</li>`;
